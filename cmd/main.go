@@ -1,47 +1,57 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
 
-	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
+	"github.com/swarnendu19/go-blog/auth"
+	"github.com/swarnendu19/go-blog/controllers"
+	"github.com/swarnendu19/go-blog/models"
 )
 
+func getEnvVar(key string) string {
+	err := godotenv.Load(".env")
+
+	if err != nil {
+		log.Fatalln("Error loading .env file.")
+	}
+
+	return os.Getenv(key)
+}
+
 func main() {
-	// Create a new Gin router
-	router := gin.Default()
+	dbUsername := getEnvVar("DBUSERNAME")
+	dbPassword := getEnvVar("DBPASSWORD")
+	dbSource := fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/goblog", dbUsername, dbPassword)
 
-	// Define a route for the GET request at "/"
-	router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Hello, World!",
-		})
-	})
+	var err error
+	models.Db, err = sql.Open("mysql", dbSource)
+	if err != nil {
+		log.Fatalln("Failed to connect to database.")
+	}
 
-	// Define a route for the GET request at "/ping"
-	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
+	defer models.Db.Close()
 
-	// Define a route for the POST request at "/post"
-	router.POST("/post", func(c *gin.Context) {
-		var json struct {
-			Name string `json:"name" binding:"required"`
-			Age  int    `json:"age" binding:"required"`
-		}
+	r := mux.NewRouter()
+	r.HandleFunc("/posts", controllers.ReturnAllPosts).Methods(http.MethodGet)
+	r.HandleFunc("/posts/batch/{id}", controllers.ReturnBatchPosts).Methods(http.MethodGet)
+	r.HandleFunc("/posts/{id}", controllers.ReturnSinglePost).Methods(http.MethodGet)
+	r.HandleFunc("/posts/{id}", controllers.UpdatePost).Methods(http.MethodOptions, http.MethodPut)
+	r.HandleFunc("/posts/{id}", controllers.DeletePost).Methods(http.MethodOptions, http.MethodDelete)
+	r.HandleFunc("/post", controllers.CreateNewPost).Methods(http.MethodOptions, http.MethodPost)
+	r.HandleFunc("/{username}", controllers.ReturnUserData).Methods(http.MethodGet)
+	r.HandleFunc("/{userid}/posts", controllers.ReturnUserPosts).Methods(http.MethodGet)
 
-		if err := c.ShouldBindJSON(&json); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+	authR := r.PathPrefix("/auth").Subrouter()
+	authR.HandleFunc("/signup", auth.SignUp).Methods(http.MethodOptions, http.MethodPost)
+	authR.HandleFunc("/login", auth.LogIn).Methods(http.MethodOptions, http.MethodPost)
+	authR.HandleFunc("/refresh", auth.Refresh).Methods(http.MethodOptions, http.MethodPost)
 
-		c.JSON(http.StatusOK, gin.H{
-			"name": json.Name,
-			"age":  json.Age,
-		})
-	})
-
-	// Start the server on port 8080
-	router.Run(":8080")
+	log.Fatal(http.ListenAndServe(":8090", r))
 }
